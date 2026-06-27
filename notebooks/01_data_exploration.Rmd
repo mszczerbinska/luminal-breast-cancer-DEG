@@ -1,0 +1,254 @@
+---
+title: "01 - Data Exploration: GSE25066"
+author: "Maria Szczerbinska"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+# Overview
+
+This notebook performs initial exploration of GSE25066 - a microarray 
+dataset of 508 primary breast tumours from tamoxifen-treated patients, 
+with treatment response annotation (pathological complete response, pCR, 
+vs. residual disease, RD).
+
+**Biological question:** Are genes involved in the FGFR2-ERα signalling 
+axis differentially expressed between tamoxifen-sensitive and 
+tamoxifen-resistant tumours?
+
+**Genes of interest:** FGFR2, ESR1, PGR, IRS1, BCL2L1
+
+**Data source:** NCBI GEO, accession GSE25066  
+**Platform:** Affymetrix HGU133A microarray  
+**Analysis method:** limma (linear models for microarray data)
+
+---
+
+# 1. Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+# Load required libraries
+# Install if missing: BiocManager::install("limma"); BiocManager::install("GEOquery")
+
+library(GEOquery)   # load GEO data
+library(limma)      # differential expression for microarray
+library(ggplot2)    # visualisation
+library(dplyr)      # data manipulation
+
+# Set ggplot2 theme for all plots
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+# 2. Load data
+
+```{r load-data, message=FALSE, warning=FALSE}
+# Load the downloaded series matrix file
+gse <- getGEO(
+  "GSE25066",
+  destdir   = "../data/raw",
+  GSEMatrix = TRUE
+)
+
+# Extract ExpressionSet object
+eset <- gse[[1]]
+
+# Basic dimensions
+cat("Number of samples: ", ncol(eset),  "\n")
+cat("Number of probes:  ", nrow(eset),  "\n")
+```
+
+---
+
+# 3. Explore clinical (phenotype) data
+
+```{r pheno-explore}
+# Extract phenotype data (clinical annotations)
+pheno <- pData(eset)
+
+# Preview column names - we need to find tamoxifen response annotation
+colnames(pheno)
+```
+
+```{r pheno-response}
+# GSE25066 contains treatment response as pCR (complete response)
+# vs RD (residual disease) - key variable for our analysis
+
+# Preview first few rows of relevant columns
+head(pheno[, c(
+  "title",
+  "characteristics_ch1",
+  "characteristics_ch1.1",
+  "characteristics_ch1.2"
+)])
+```
+
+```{r response-counts}
+# Find and tabulate tamoxifen response
+# Note: column name may vary - adjust based on colnames() output above
+
+# Common column name in GSE25066:
+response_col <- "characteristics_ch1.1"
+
+response_table <- table(pheno[[response_col]])
+print(response_table)
+
+# Plot sample distribution by response
+ggplot(pheno, aes(x = pheno[[response_col]])) +
+  geom_bar(fill = c("#E07B7B", "#7BA7E0")) +
+  labs(
+    title = "Sample distribution by tamoxifen response",
+    x     = "Treatment response",
+    y     = "Number of samples",
+    caption = "GSE25066 | n = 508"
+  )
+
+ggsave(
+  "../results/figures/01_sample_distribution.png",
+  width = 6, height = 4, dpi = 150
+)
+```
+
+---
+
+# 4. Quality control
+
+```{r qc-boxplot, fig.width=12, fig.height=5}
+# Expression value distribution across samples
+# A well-normalised dataset should show similar distributions per sample
+
+# Take a random subset of 40 samples for readability
+set.seed(42)
+sample_idx <- sample(ncol(eset), 40)
+
+boxplot(
+  exprs(eset)[, sample_idx],
+  outline = FALSE,
+  las     = 2,
+  cex.axis = 0.5,
+  col      = "steelblue",
+  main     = "Expression distribution (random subset of 40 samples)",
+  ylab     = "Expression value (log2)"
+)
+```
+
+```{r qc-density}
+# Density plot of expression values - all samples overlaid
+# All lines should roughly overlap if data is well-normalised
+
+expr_df <- as.data.frame(exprs(eset)[, sample_idx]) |>
+  tidyr::pivot_longer(
+    cols      = everything(),
+    names_to  = "sample",
+    values_to = "expression"
+  )
+
+ggplot(expr_df, aes(x = expression, group = sample)) +
+  geom_density(alpha = 0.3, colour = "steelblue", linewidth = 0.3) +
+  labs(
+    title   = "Expression density (random subset of 40 samples)",
+    x       = "Expression value (log2)",
+    y       = "Density",
+    caption = "GSE25066"
+  )
+
+ggsave(
+  "../results/figures/01_expression_density.png",
+  width = 7, height = 4, dpi = 150
+)
+```
+
+---
+
+# 5. PCA - overview of sample structure
+
+```{r pca}
+# PCA helps detect batch effects and outliers
+# and shows whether samples cluster by biological group
+
+# Transpose: PCA expects samples as rows
+pca_result <- prcomp(
+  t(exprs(eset)),
+  center = TRUE,
+  scale. = FALSE
+)
+
+# Variance explained by each PC
+var_explained <- round(
+  summary(pca_result)$importance[2, 1:5] * 100, 1
+)
+
+# Build PCA dataframe for plotting
+pca_df <- data.frame(
+  PC1      = pca_result$x[, 1],
+  PC2      = pca_result$x[, 2],
+  response = pheno[[response_col]]
+)
+
+ggplot(pca_df, aes(x = PC1, y = PC2, colour = response)) +
+  geom_point(alpha = 0.6, size = 2) +
+  scale_colour_manual(values = c("#E07B7B", "#7BA7E0")) +
+  labs(
+    title   = "PCA of GSE25066 samples",
+    x       = paste0("PC1 (", var_explained[1], "% variance)"),
+    y       = paste0("PC2 (", var_explained[2], "% variance)"),
+    colour  = "Response",
+    caption = "GSE25066 | n = 508"
+  )
+
+ggsave(
+  "../results/figures/01_pca.png",
+  width = 7, height = 5, dpi = 150
+)
+```
+
+---
+
+# 6. Genes of interest - quick look
+
+```{r genes-of-interest}
+# Check expression of key FGFR2-ERα pathway genes
+# Note: microarray uses probe IDs, not gene symbols
+# We need to map probe IDs to gene symbols via feature data
+
+# Extract feature data (probe - gene symbol mapping)
+fdata <- fData(eset)
+head(fdata[, c("ID", "Gene Symbol", "Gene Title")])
+```
+
+```{r gene-lookup}
+# Genes of interest
+genes_of_interest <- c("FGFR2", "ESR1", "PGR", "IRS1", "BCL2L1")
+
+# Find probes corresponding to these genes
+probes_of_interest <- fdata[
+  fdata[["Gene Symbol"]] %in% genes_of_interest,
+  c("ID", "Gene Symbol")
+]
+
+print(probes_of_interest)
+cat("\nFound", nrow(probes_of_interest), "probes for", 
+    length(genes_of_interest), "genes of interest\n")
+```
+
+---
+
+# 7. Session info
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+
+# Next steps
+
+- `02_differential_expression.Rmd` - limma analysis: pCR vs RD
+- `03_pathway_analysis.Rmd` - FGFR2-ERα pathway visualisation
+- `04_survival_analysis.Rmd` - correlation with clinical outcomes

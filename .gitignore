@@ -1,0 +1,16 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj
+
+# Data — download locally using scripts/01_download_data.R
+data/raw/
+
+# Large result files
+results/figures/*.pdf
+results/tables/*.csv
+
+# System
+.DS_Store
+Thumbs.db

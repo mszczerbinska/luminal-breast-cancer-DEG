@@ -1,0 +1,253 @@
+---
+title: "02 - Differential Expression Analysis: pCR vs RD"
+author: "Maria Szczerbinska"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+# Overview
+
+This notebook performs differential expression analysis between tamoxifen-sensitive 
+(pCR) and tamoxifen-resistant (RD) tumours using limma.
+
+We focus on the FGFR2-ERα signalling axis genes: FGFR2, ESR1, PGR, IRS1, BCL2L1.
+
+---
+
+# 1. Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(GEOquery)
+library(limma)
+library(ggplot2)
+library(dplyr)
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+# 2. Load data
+
+```{r load-data, message=FALSE, warning=FALSE}
+gse  <- getGEO("GSE25066", destdir = "../data/raw", GSEMatrix = TRUE)
+eset <- gse[[1]]
+
+# Extract expression matrix and phenotype data
+expr  <- exprs(eset)
+pheno <- pData(eset)
+fdata <- fData(eset)
+
+cat("Samples:", ncol(expr), "\n")
+cat("Probes: ", nrow(expr), "\n")
+```
+
+---
+
+# 3. Prepare groups
+
+```{r prepare-groups}
+# Extract response column and keep only pCR and RD samples
+response <- pheno[["pathologic_response_pcr_rd:ch1"]]
+
+# Remove NA samples
+keep     <- !is.na(response) & response %in% c("pCR", "RD")
+expr_sub  <- expr[, keep]
+response_sub <- factor(response[keep], levels = c("RD", "pCR"))
+
+cat("Samples after removing NA:\n")
+print(table(response_sub))
+```
+
+---
+
+# 4. Probe selection - one probe per gene
+
+```{r probe-selection}
+# For genes with multiple probes, keep the probe with highest mean expression
+# This is a standard approach for Affymetrix data
+
+genes_of_interest <- c("FGFR2", "ESR1", "PGR", "IRS1", "BCL2L1")
+
+# Find all probes for genes of interest
+probes <- fdata[fdata[["Gene Symbol"]] %in% genes_of_interest,
+                c("ID", "Gene Symbol")]
+
+# Calculate mean expression per probe
+probes$mean_expr <- rowMeans(expr_sub[probes$ID, ])
+
+# Select probe with highest mean expression per gene
+best_probes <- probes %>%
+  group_by(`Gene Symbol`) %>%
+  slice_max(mean_expr, n = 1) %>%
+  ungroup()
+
+print(best_probes[, c("Gene Symbol", "ID", "mean_expr")])
+```
+
+---
+
+# 5. Differential expression with limma
+
+```{r limma-full}
+# Run limma on full expression matrix
+# This gives us genome-wide results
+
+# Design matrix: intercept + group effect
+design <- model.matrix(~ response_sub)
+
+# Fit linear model
+fit  <- lmFit(expr_sub, design)
+fit  <- eBayes(fit)
+
+# Extract all results
+results_all <- topTable(fit, coef = 2, number = Inf, sort.by = "P")
+
+# Add gene symbols
+results_all$probe_id    <- rownames(results_all)
+results_all$gene_symbol <- fdata[results_all$probe_id, "Gene Symbol"]
+
+cat("Total probes tested:", nrow(results_all), "\n")
+cat("Significant (adj.P < 0.05):", sum(results_all$adj.P.Val < 0.05), "\n")
+cat("Significant (adj.P < 0.05 & |logFC| > 1):",
+    sum(results_all$adj.P.Val < 0.05 & abs(results_all$logFC) > 1), "\n")
+```
+
+---
+
+# 6. Results for genes of interest
+
+```{r genes-results}
+# Extract limma results for our FGFR2-ERα pathway genes
+genes_results <- results_all[results_all$probe_id %in% best_probes$ID, ]
+genes_results$gene_symbol <- fdata[genes_results$probe_id, "Gene Symbol"]
+
+# Select relevant columns
+genes_results <- genes_results[, c("gene_symbol", "logFC", "AveExpr",
+                                    "t", "P.Value", "adj.P.Val")]
+
+# Sort by p-value
+genes_results <- genes_results[order(genes_results$P.Value), ]
+
+print(genes_results)
+```
+
+---
+
+# 7. Volcano plot
+
+```{r volcano, fig.width=8, fig.height=6}
+# Classify probes for colouring
+results_all$status <- "Not significant"
+results_all$status[results_all$adj.P.Val < 0.05 & results_all$logFC >  1] <- "Up in pCR"
+results_all$status[results_all$adj.P.Val < 0.05 & results_all$logFC < -1] <- "Up in RD"
+
+# Label our genes of interest
+results_all$label <- ifelse(
+  results_all$probe_id %in% best_probes$ID,
+  results_all$gene_symbol,
+  NA
+)
+
+ggplot(results_all, aes(x = logFC, y = -log10(P.Value), colour = status)) +
+  geom_point(alpha = 0.4, size = 1) +
+  geom_point(
+    data = results_all[!is.na(results_all$label), ],
+    size = 3
+  ) +
+  ggrepel::geom_text_repel(
+    aes(label = label),
+    size = 3.5,
+    max.overlaps = 20
+  ) +
+  scale_colour_manual(values = c(
+    "Not significant" = "grey70",
+    "Up in pCR"       = "#7BA7E0",
+    "Up in RD"        = "#E07B7B"
+  )) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed", colour = "grey40") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", colour = "grey40") +
+  labs(
+    title   = "Differential expression: pCR vs RD",
+    x       = "log2 Fold Change (pCR vs RD)",
+    y       = "-log10(p-value)",
+    colour  = "Status",
+    caption = "GSE25066 | limma | adj.P < 0.05 & |logFC| > 1"
+  )
+
+ggsave(
+  "../results/figures/02_volcano_plot.png",
+  width = 8, height = 6, dpi = 150
+)
+```
+
+---
+
+# 8. Heatmap - top 50 genes + genes of interest
+
+```{r heatmap, fig.width=8, fig.height=10}
+# Select top 50 DE genes + our genes of interest
+top50_probes <- head(rownames(results_all[results_all$adj.P.Val < 0.05, ]), 50)
+probes_to_plot <- unique(c(top50_probes, best_probes$ID))
+
+# Expression matrix for heatmap
+expr_heatmap <- expr_sub[probes_to_plot, ]
+
+# Replace probe IDs with gene symbols where available
+gene_labels <- fdata[rownames(expr_heatmap), "Gene Symbol"]
+gene_labels[gene_labels == ""] <- rownames(expr_heatmap)[gene_labels == ""]
+rownames(expr_heatmap) <- gene_labels
+
+# Annotation for columns (samples)
+col_annotation <- data.frame(
+  Response = response_sub,
+  row.names = colnames(expr_heatmap)
+)
+
+ann_colours <- list(Response = c("pCR" = "#7BA7E0", "RD" = "#E07B7B"))
+
+# Generate heatmap object
+p <- pheatmap::pheatmap(
+  expr_heatmap,
+  annotation_col    = col_annotation,
+  annotation_colors = ann_colours,
+  show_colnames     = FALSE,
+  scale             = "row",
+  clustering_distance_rows = "euclidean",
+  clustering_distance_cols = "euclidean",
+  color             = colorRampPalette(c("#7BA7E0", "white", "#E07B7B"))(100),
+  main              = "Top DE genes + FGFR2-ERa pathway genes\n(pCR vs RD, GSE25066)",
+  silent            = TRUE
+)
+
+# Display in notebook
+print(p)
+
+# Save to file separately
+ggsave(
+  "../results/figures/02_heatmap.png",
+  plot   = p,
+  width  = 8,
+  height = 10,
+  dpi    = 150
+)
+```
+
+---
+
+# 9. Session info
+
+```{r session-info}
+sessionInfo()
+```
+
+---
+
+# Next steps
+
+- `03_survival_analysis.Rmd` - Kaplan-Meier curves for top DE genes

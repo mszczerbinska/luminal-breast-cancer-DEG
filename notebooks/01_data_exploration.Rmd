@@ -94,14 +94,14 @@ head(pheno[, c(
 # Note: column name may vary - adjust based on colnames() output above
 
 # Common column name in GSE25066:
-response_col <- "characteristics_ch1.1"
+response_col <- "pathologic_response_pcr_rd:ch1"
 
 response_table <- table(pheno[[response_col]])
 print(response_table)
 
 # Plot sample distribution by response
 ggplot(pheno, aes(x = pheno[[response_col]])) +
-  geom_bar(fill = c("#E07B7B", "#7BA7E0")) +
+  geom_bar(fill = "steelblue") +
   labs(
     title = "Sample distribution by tamoxifen response",
     x     = "Treatment response",
@@ -193,7 +193,7 @@ pca_df <- data.frame(
 
 ggplot(pca_df, aes(x = PC1, y = PC2, colour = response)) +
   geom_point(alpha = 0.6, size = 2) +
-  scale_colour_manual(values = c("#E07B7B", "#7BA7E0")) +
+  scale_colour_manual(values = c("pCR" = "#7BA7E0", "RD" = "#E07B7B", "NA" = "grey70")) +
   labs(
     title   = "PCA of GSE25066 samples",
     x       = paste0("PC1 (", var_explained[1], "% variance)"),

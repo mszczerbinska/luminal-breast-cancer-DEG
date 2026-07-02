@@ -73,21 +73,21 @@ cannot capture this mechanism - it would require protein-level
 analysis (e.g. phosphorylation status).
 
 ## Repository structure
-├── README.md
-├── data/
-│   └── raw/                # not tracked by git, see Data section
-├── notebooks/
-│   ├── 01_data_exploration.Rmd
-│   ├── 02_differential_expression.Rmd
-│   └── 03_survival_analysis.Rmd
-├── scripts/
-│   └── 01_download_data.R
-├── results/
-│   ├── figures/
-│   └── tables/
-├── environment/
-│   └── session_info.txt
-└── .gitignore
+    ├── README.md
+    ├── data/
+    │   └── raw/                # not tracked by git, see Data section
+    ├── notebooks/
+    │   ├── 01_data_exploration.Rmd
+    │   ├── 02_differential_expression.Rmd
+    │   └── 03_survival_analysis.Rmd
+    ├── scripts/
+    │   └── 01_download_data.R
+    ├── results/
+    │   ├── figures/
+    │   └── tables/
+    ├── environment/
+    │   └── session_info.txt
+    └── .gitignore
 
 ## How to reproduce
 1. Clone this repository

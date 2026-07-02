@@ -1,0 +1,213 @@
+---
+title: "03 - Survival Analysis: FGFR2-ERa Pathway Genes"
+author: "Maria Szczerbinska"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: flatly
+    code_folding: show
+---
+
+# Overview
+
+This notebook investigates whether expression of FGFR2-ERa pathway genes
+(ESR1, PGR, FGFR2, IRS1, BCL2L1) correlates with distant relapse-free
+survival (DRFS) in the GSE25066 cohort.
+
+---
+
+# 1. Setup
+
+```{r setup, message=FALSE, warning=FALSE}
+library(GEOquery)
+library(survival)
+library(survminer)
+library(dplyr)
+library(ggplot2)
+
+theme_set(theme_bw(base_size = 13))
+```
+
+---
+
+# 2. Load data
+
+```{r load-data, message=FALSE, warning=FALSE}
+gse  <- getGEO("GSE25066", destdir = "../data/raw", GSEMatrix = TRUE)
+eset <- gse[[1]]
+
+expr  <- exprs(eset)
+pheno <- pData(eset)
+fdata <- fData(eset)
+```
+
+---
+
+# 3. Prepare survival data
+
+```{r prepare-survival}
+# Extract survival variables
+time_col  <- "drfs_even_time_years:ch1"
+event_col <- "drfs_1_event_0_censored:ch1"
+
+surv_data <- data.frame(
+  sample_id = rownames(pheno),
+  time      = as.numeric(pheno[[time_col]]),
+  event     = as.numeric(pheno[[event_col]])
+)
+
+# Remove samples with missing survival data
+surv_data <- surv_data[!is.na(surv_data$time) & !is.na(surv_data$event), ]
+
+cat("Samples with survival data:", nrow(surv_data), "\n")
+cat("Events (relapses):", sum(surv_data$event == 1), "\n")
+cat("Censored:", sum(surv_data$event == 0), "\n")
+```
+
+---
+
+# 4. Select probes for genes of interest
+
+```{r probe-selection}
+genes_of_interest <- c("FGFR2", "ESR1", "PGR", "IRS1", "BCL2L1")
+
+probes <- fdata[fdata[["Gene Symbol"]] %in% genes_of_interest,
+                c("ID", "Gene Symbol")]
+
+probes$mean_expr <- rowMeans(expr[probes$ID, ])
+
+best_probes <- probes %>%
+  group_by(`Gene Symbol`) %>%
+  slice_max(mean_expr, n = 1) %>%
+  ungroup()
+
+print(best_probes[, c("Gene Symbol", "ID")])
+```
+
+---
+
+# 5. Build survival dataset with gene expression
+
+```{r build-dataset}
+# Extract expression for genes of interest, samples with survival data only
+expr_genes <- t(expr[best_probes$ID, surv_data$sample_id])
+colnames(expr_genes) <- best_probes$`Gene Symbol`
+
+surv_full <- cbind(surv_data, expr_genes)
+
+head(surv_full)
+```
+
+---
+
+# 6. Kaplan-Meier curves - high vs low expression
+
+For each gene, samples are split into "high" and "low" expression groups
+using the median as cutoff.
+
+```{r km-esr1, fig.width=7, fig.height=6}
+# ESR1
+surv_full$ESR1_group <- ifelse(
+  surv_full$ESR1 > median(surv_full$ESR1), "High", "Low"
+)
+
+fit_esr1 <- survfit(
+  Surv(time, event) ~ ESR1_group,
+  data = surv_full
+)
+
+ggsurvplot(
+  fit_esr1,
+  data          = surv_full,
+  pval          = TRUE,
+  risk.table    = TRUE,
+  palette       = c("#E07B7B", "#7BA7E0"),
+  title         = "DRFS by ESR1 expression",
+  xlab          = "Time (years)",
+  ylab          = "Distant relapse-free survival",
+  legend.title  = "ESR1 expression",
+  legend.labs   = c("High", "Low")
+)
+```
+
+```{r km-pgr, fig.width=7, fig.height=6}
+# PGR
+surv_full$PGR_group <- ifelse(
+  surv_full$PGR > median(surv_full$PGR), "High", "Low"
+)
+
+fit_pgr <- survfit(
+  Surv(time, event) ~ PGR_group,
+  data = surv_full
+)
+
+ggsurvplot(
+  fit_pgr,
+  data          = surv_full,
+  pval          = TRUE,
+  risk.table    = TRUE,
+  palette       = c("#E07B7B", "#7BA7E0"),
+  title         = "DRFS by PGR expression",
+  xlab          = "Time (years)",
+  ylab          = "Distant relapse-free survival",
+  legend.title  = "PGR expression",
+  legend.labs   = c("High", "Low")
+)
+```
+
+```{r km-fgfr2, fig.width=7, fig.height=6}
+# FGFR2
+surv_full$FGFR2_group <- ifelse(
+  surv_full$FGFR2 > median(surv_full$FGFR2), "High", "Low"
+)
+
+fit_fgfr2 <- survfit(
+  Surv(time, event) ~ FGFR2_group,
+  data = surv_full
+)
+
+ggsurvplot(
+  fit_fgfr2,
+  data          = surv_full,
+  pval          = TRUE,
+  risk.table    = TRUE,
+  palette       = c("#E07B7B", "#7BA7E0"),
+  title         = "DRFS by FGFR2 expression",
+  xlab          = "Time (years)",
+  ylab          = "Distant relapse-free survival",
+  legend.title  = "FGFR2 expression",
+  legend.labs   = c("High", "Low")
+)
+```
+
+---
+
+# 7. Summary table - log-rank test results
+
+```{r summary-table}
+genes_to_test <- c("ESR1", "PGR", "FGFR2", "IRS1", "BCL2L1")
+
+logrank_results <- lapply(genes_to_test, function(gene) {
+  group_var <- ifelse(
+    surv_full[[gene]] > median(surv_full[[gene]]), "High", "Low"
+  )
+  fit <- survdiff(Surv(time, event) ~ group_var, data = surv_full)
+  p_value <- 1 - pchisq(fit$chisq, df = 1)
+  data.frame(gene = gene, p_value = round(p_value, 4))
+})
+
+logrank_summary <- do.call(rbind, logrank_results)
+logrank_summary <- logrank_summary[order(logrank_summary$p_value), ]
+
+print(logrank_summary)
+```
+
+---
+
+# 8. Session info
+
+```{r session-info}
+sessionInfo()
+```

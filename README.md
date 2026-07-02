@@ -23,6 +23,9 @@ transcriptomic differences between tamoxifen-sensitive and resistant
 tumours, and to test whether expression of these genes is associated 
 with long-term clinical outcome.
 
+For a deeper dive into the biology behind this project, see 
+[docs/biological_background.md](docs/biological_background.md).
+
 ## Data
 - **Source:** NCBI GEO
 - **Dataset:** GSE25066 (n=508, primary breast tumours, 
